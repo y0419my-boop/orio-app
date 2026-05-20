@@ -8,10 +8,10 @@ const COLORS = {
 };
 
 const INIT_EPISODES = [
-  { id:1, title:"30代から始める資産形成 最初の一歩は何をすべきか", creator:"山田 マネー", category:"お金・投資", duration:"22分", plays:"4.2k", hasAI:true, isOwn:false, summary:["まず緊急資金3ヶ月分を確保する","新NISAの積立枠から開始が最適","インデックス投資が初心者の正解","月3万円から無理なく継続する","複利効果を最大限に活用する"] },
-  { id:2, title:"新NISA完全攻略ガイド2025年版", creator:"投資Lab · 田中ケン", category:"お金・投資", duration:"18分", plays:"6.8k", hasAI:true, isOwn:false, summary:["成長投資枠と積立投資枠の違い","年間360万円の非課税枠を活用","おすすめ銘柄ランキングTOP5","始める前に知るべき3つのこと","出口戦略まで考えて投資する"] },
-  { id:3, title:"スキンケア初心者が最初にやること", creator:"メンズビューティLab · 佐藤", category:"メンズ美容", duration:"12分", plays:"3.1k", hasAI:false, isOwn:false, summary:[] },
-  { id:4, title:"副業で月10万を達成した具体的な方法", creator:"副業チャンネル · 木村リョウ", category:"キャリア", duration:"25分", plays:"9.3k", hasAI:true, isOwn:false, summary:["副業選びの3つの基準を理解する","SNS発信が最速の収益化ルート","最初の1万円を稼ぐまでの戦略","本業との両立タイムマネジメント","月10万達成後のスケールアップ法"] },
+  { id:1, title:"30代から始める資産形成 最初の一歩は何をすべきか", creator:"山田 マネー", category:"お金・投資", duration:"22分", plays:"4.2k", hasAI:true, isOwn:false, audioUrl:null, summary:["まず緊急資金3ヶ月分を確保する","新NISAの積立枠から開始が最適","インデックス投資が初心者の正解","月3万円から無理なく継続する","複利効果を最大限に活用する"] },
+  { id:2, title:"新NISA完全攻略ガイド2025年版", creator:"投資Lab · 田中ケン", category:"お金・投資", duration:"18分", plays:"6.8k", hasAI:true, isOwn:false, audioUrl:null, summary:["成長投資枠と積立投資枠の違い","年間360万円の非課税枠を活用","おすすめ銘柄ランキングTOP5","始める前に知るべき3つのこと","出口戦略まで考えて投資する"] },
+  { id:3, title:"スキンケア初心者が最初にやること", creator:"メンズビューティLab · 佐藤", category:"メンズ美容", duration:"12分", plays:"3.1k", hasAI:false, isOwn:false, audioUrl:null, summary:[] },
+  { id:4, title:"副業で月10万を達成した具体的な方法", creator:"副業チャンネル · 木村リョウ", category:"キャリア", duration:"25分", plays:"9.3k", hasAI:true, isOwn:false, audioUrl:null, summary:["副業選びの3つの基準を理解する","SNS発信が最速の収益化ルート","最初の1万円を稼ぐまでの戦略","本業との両立タイムマネジメント","月10万達成後のスケールアップ法"] },
 ];
 
 const CATEGORIES = ["すべて","お金・投資","メンズ美容","キャリア"];
@@ -30,6 +30,7 @@ function ORIOLogo({size=1}){
     <line x1="20" y1="11" x2="18" y2="11" stroke={COLORS.gold} strokeWidth="1.5" strokeLinecap="round"/>
   </svg>;
 }
+
 function Waveform({active,bars=14}){
   const heights=[7,14,9,20,11,18,8,22,10,16,6,13,19,8];
   const [tick,setTick]=useState(0);
@@ -57,26 +58,34 @@ async function callClaude(userMsg){
 }
 
 async function generateAISummary(transcript){
-  const prompt=`以下は音声配信の文字起こしです。JSONのみ返してください：{"title":"タイトル20文字以内","summary":["要点1","要点2","要点3","要点4","要点5"],"category":"お金・投資か メンズ美容かキャリアのいずれか"}\n\n文字起こし：${transcript}`;
+  const prompt=`以下は音声配信の文字起こしです。JSONのみ返してください：{"title":"タイトル20文字以内","summary":["要点1","要点2","要点3","要点4","要点5"],"category":"お金・投資かメンズ美容かキャリアのいずれか"}\n\n文字起こし：${transcript}`;
   try{ const raw=await callClaude(prompt); const m=raw.match(/\{[\s\S]*\}/); if(m)return JSON.parse(m[0]); }catch(_){}
   return null;
 }
-
 function useRecorder(){
   const [state,setState]=useState("idle");
   const [seconds,setSeconds]=useState(0);
   const [transcript,setTranscript]=useState("");
   const [aiResult,setAiResult]=useState(null);
   const [errMsg,setErrMsg]=useState("");
+  const [audioUrl,setAudioUrl]=useState(null);
   const mediaRef=useRef(null);
+  const chunksRef=useRef([]);
   const timerRef=useRef(null);
   const recognRef=useRef(null);
 
   const start=useCallback(async()=>{
-    setErrMsg(""); setTranscript(""); setAiResult(null);
+    setErrMsg(""); setTranscript(""); setAiResult(null); setAudioUrl(null);
     try{
       const stream=await navigator.mediaDevices.getUserMedia({audio:true});
       const mr=new MediaRecorder(stream);
+      chunksRef.current=[];
+      mr.ondataavailable=e=>{ if(e.data.size>0)chunksRef.current.push(e.data); };
+      mr.onstop=()=>{
+        const blob=new Blob(chunksRef.current,{type:"audio/webm"});
+        const url=URL.createObjectURL(blob);
+        setAudioUrl(url);
+      };
       mr.start(200);
       mediaRef.current=mr;
       setState("recording"); setSeconds(0);
@@ -93,21 +102,83 @@ function useRecorder(){
   const stop=useCallback(async()=>{
     clearInterval(timerRef.current);
     try{ recognRef.current?.stop(); }catch(_){}
-    if(mediaRef.current){ mediaRef.current.stream.getTracks().forEach(t=>t.stop()); mediaRef.current.stop(); }
+    if(mediaRef.current){
+      mediaRef.current.stream.getTracks().forEach(t=>t.stop());
+      mediaRef.current.stop();
+    }
     setState("processing");
-    await new Promise(r=>setTimeout(r,800));
+    await new Promise(r=>setTimeout(r,1000));
     const t=transcript||"音声が録音されました。お金と投資についての配信です。";
     const result=await generateAISummary(t);
     setAiResult(result); setState("done");
   },[transcript]);
 
-  const reset=useCallback(()=>{ setState("idle"); setSeconds(0); setTranscript(""); setAiResult(null); setErrMsg(""); },[]);
-  return{state,seconds,transcript,aiResult,errMsg,start,stop,reset};
+  const reset=useCallback(()=>{
+    if(audioUrl)URL.revokeObjectURL(audioUrl);
+    setState("idle"); setSeconds(0); setTranscript(""); setAiResult(null); setErrMsg(""); setAudioUrl(null);
+  },[audioUrl]);
+
+  return{state,seconds,transcript,aiResult,errMsg,audioUrl,start,stop,reset};
+}
+
+function AudioPlayer({audioUrl,title}){
+  const audioRef=useRef(null);
+  const [playing,setPlaying]=useState(false);
+  const [progress,setProgress]=useState(0);
+  const [duration,setDuration]=useState(0);
+
+  useEffect(()=>{
+    const audio=audioRef.current;
+    if(!audio)return;
+    const onTime=()=>setProgress(audio.currentTime/audio.duration*100||0);
+    const onMeta=()=>setDuration(audio.duration);
+    const onEnd=()=>setPlaying(false);
+    audio.addEventListener("timeupdate",onTime);
+    audio.addEventListener("loadedmetadata",onMeta);
+    audio.addEventListener("ended",onEnd);
+    return()=>{ audio.removeEventListener("timeupdate",onTime); audio.removeEventListener("loadedmetadata",onMeta); audio.removeEventListener("ended",onEnd); };
+  },[audioUrl]);
+
+  const toggle=()=>{
+    const audio=audioRef.current;
+    if(!audio)return;
+    if(playing){ audio.pause(); setPlaying(false); }
+    else{ audio.play(); setPlaying(true); }
+  };
+
+  const seek=e=>{
+    const audio=audioRef.current;
+    if(!audio)return;
+    const rect=e.currentTarget.getBoundingClientRect();
+    const pct=(e.clientX-rect.left)/rect.width;
+    audio.currentTime=pct*audio.duration;
+  };
+
+  return <div style={{background:COLORS.bgDeep,borderRadius:12,padding:12,border:`0.5px solid ${COLORS.gold}`,marginBottom:12}}>
+    <audio ref={audioRef} src={audioUrl} preload="metadata"/>
+    <div style={{fontSize:10,color:COLORS.gold,marginBottom:8}}>録音した音声を再生</div>
+    <div style={{height:3,background:COLORS.border,borderRadius:2,marginBottom:10,cursor:"pointer",overflow:"hidden"}} onClick={seek}>
+      <div style={{height:"100%",width:`${progress}%`,background:COLORS.gold,borderRadius:2,transition:"width .1s"}}/>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:10}}>
+      <button onClick={toggle} style={{width:36,height:36,borderRadius:"50%",background:COLORS.gold,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+        {playing
+          ?<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="2" y="2" width="3" height="8" rx="1" fill={COLORS.bg}/><rect x="7" y="2" width="3" height="8" rx="1" fill={COLORS.bg}/></svg>
+          :<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 2l7 4-7 4V2z" fill={COLORS.bg}/></svg>}
+      </button>
+      <div style={{flex:1}}>
+        <div style={{fontSize:11,color:COLORS.text,marginBottom:2}}>{title||"録音した音声"}</div>
+        <div style={{fontSize:10,color:COLORS.textMuted}}>{fmtSec(Math.floor(duration))}</div>
+      </div>
+      {playing&&<Waveform active bars={8}/>}
+    </div>
+  </div>;
 }
 function EpisodeCard({ep,onPlay,playing,onSelect}){
   return <div onClick={()=>onSelect(ep)} style={{background:COLORS.bgCard,borderRadius:14,padding:"12px 14px",marginBottom:10,border:`0.5px solid ${COLORS.border}`,cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.borderColor=COLORS.goldDim} onMouseLeave={e=>e.currentTarget.style.borderColor=COLORS.border}>
     {ep.hasAI&&<Badge color={COLORS.gold} bg={COLORS.bgDeep} border={COLORS.goldDim}>AI要約あり</Badge>}
     {ep.isOwn&&<Badge color={COLORS.green} bg={COLORS.bgDeep} border={COLORS.green}>自分の配信</Badge>}
+    {ep.audioUrl&&<Badge color={COLORS.gold} bg={COLORS.bgDeep} border={COLORS.goldDim}>再生可能</Badge>}
     <div style={{display:"flex",gap:10,margin:"8px 0"}}>
       <div style={{width:40,height:40,borderRadius:10,background:COLORS.navy,border:`0.5px solid ${COLORS.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><ORIOLogo size={0.85}/></div>
       <div style={{flex:1,minWidth:0}}>
@@ -122,8 +193,10 @@ function EpisodeCard({ep,onPlay,playing,onSelect}){
         <Badge>{ep.category}</Badge>
         <span style={{fontSize:11,color:COLORS.textDim}}>{ep.plays} 再生</span>
       </div>
-      <button onClick={e=>{e.stopPropagation();onPlay(ep);}} style={{width:32,height:32,borderRadius:"50%",background:playing?COLORS.goldLight:COLORS.gold,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-        {playing?<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="2" y="2" width="3" height="8" rx="1" fill={COLORS.bg}/><rect x="7" y="2" width="3" height="8" rx="1" fill={COLORS.bg}/></svg>:<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 2l7 4-7 4V2z" fill={COLORS.bg}/></svg>}
+      <button onClick={e=>{e.stopPropagation();onPlay(ep);}} style={{width:32,height:32,borderRadius:"50%",background:ep.audioUrl?COLORS.gold:COLORS.navy,border:`0.5px solid ${ep.audioUrl?COLORS.gold:COLORS.border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+        {playing
+          ?<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="2" y="2" width="3" height="8" rx="1" fill={COLORS.bg}/><rect x="7" y="2" width="3" height="8" rx="1" fill={COLORS.bg}/></svg>
+          :<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 2l7 4-7 4V2z" fill={ep.audioUrl?COLORS.bg:COLORS.textDim}/></svg>}
       </button>
     </div>
   </div>;
@@ -138,6 +211,7 @@ function AISummaryPanel({ep,onClose}){
       </div>
       <button onClick={onClose} style={{background:"none",border:"none",color:COLORS.textMuted,cursor:"pointer",fontSize:18}}>×</button>
     </div>
+    {ep.audioUrl&&<AudioPlayer audioUrl={ep.audioUrl} title={ep.title}/>}
     <div style={{borderTop:`0.5px solid ${COLORS.border}`,paddingTop:10}}>
       {ep.summary.map((s,i)=><div key={i} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:7}}>
         <div style={{width:18,height:18,borderRadius:"50%",background:COLORS.navy,border:`0.5px solid ${COLORS.goldDim}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:9,color:COLORS.gold,fontWeight:500}}>{i+1}</div>
@@ -149,21 +223,41 @@ function AISummaryPanel({ep,onClose}){
 }
 
 function PlayerBar({ep,playing,onToggle}){
-  const [prog,setProg]=useState(12);
-  useEffect(()=>{ if(!playing)return; const id=setInterval(()=>setProg(p=>Math.min(p+0.25,100)),300); return()=>clearInterval(id); },[playing,ep]);
+  const audioRef=useRef(null);
+  const [prog,setProg]=useState(0);
+
+  useEffect(()=>{
+    if(!ep?.audioUrl)return;
+    const audio=new Audio(ep.audioUrl);
+    audioRef.current=audio;
+    audio.addEventListener("timeupdate",()=>setProg(audio.currentTime/audio.duration*100||0));
+    audio.addEventListener("ended",()=>onToggle());
+    return()=>{ audio.pause(); audio.src=""; };
+  },[ep?.audioUrl]);
+
+  useEffect(()=>{
+    const audio=audioRef.current;
+    if(!audio)return;
+    if(playing)audio.play().catch(()=>{});
+    else audio.pause();
+  },[playing]);
+
   if(!ep)return null;
+
   return <div style={{background:COLORS.bgDeep,borderTop:`0.5px solid ${COLORS.border}`,padding:"10px 16px 14px"}}>
     <div style={{height:2,background:COLORS.border,borderRadius:1,marginBottom:10,overflow:"hidden"}}>
-      <div style={{height:"100%",width:`${prog}%`,background:COLORS.gold,borderRadius:1,transition:"width .3s linear"}}/>
+      <div style={{height:"100%",width:`${ep.audioUrl?prog:12}%`,background:COLORS.gold,borderRadius:1,transition:"width .3s linear"}}/>
     </div>
     <div style={{display:"flex",alignItems:"center",gap:10}}>
       <div style={{width:36,height:36,borderRadius:10,background:COLORS.navy,border:`1.5px solid ${COLORS.gold}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><ORIOLogo size={0.8}/></div>
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontSize:12,fontWeight:500,color:COLORS.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ep.title}</div>
-        <div style={{fontSize:10,color:COLORS.textMuted}}>{ep.creator}</div>
+        <div style={{fontSize:10,color:COLORS.textMuted}}>{ep.audioUrl?"音声あり · "+ep.creator:ep.creator}</div>
       </div>
       <button onClick={onToggle} style={{width:36,height:36,borderRadius:"50%",background:COLORS.gold,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-        {playing?<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="2" y="2" width="3.5" height="9" rx="1" fill={COLORS.bg}/><rect x="7.5" y="2" width="3.5" height="9" rx="1" fill={COLORS.bg}/></svg>:<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M3.5 2.5l8 5-8 5V2.5z" fill={COLORS.bg}/></svg>}
+        {playing
+          ?<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="2" y="2" width="3.5" height="9" rx="1" fill={COLORS.bg}/><rect x="7.5" y="2" width="3.5" height="9" rx="1" fill={COLORS.bg}/></svg>
+          :<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M3.5 2.5l8 5-8 5V2.5z" fill={COLORS.bg}/></svg>}
       </button>
     </div>
   </div>;
@@ -173,7 +267,7 @@ function RecordScreen({onPublish}){
   const [title,setTitle]=useState("");
   const handlePublish=()=>{
     const t=title.trim()||rec.aiResult?.title||"新しいエピソード";
-    onPublish({id:Date.now(),title:t,creator:"山田 タロウ（あなた）",category:rec.aiResult?.category||"お金・投資",duration:`${Math.floor(rec.seconds/60)||1}分`,plays:"0",hasAI:!!rec.aiResult,isOwn:true,summary:rec.aiResult?.summary||[],transcript:rec.transcript});
+    onPublish({id:Date.now(),title:t,creator:"あなたの配信",category:rec.aiResult?.category||"お金・投資",duration:`${Math.floor(rec.seconds/60)||1}分`,plays:"0",hasAI:!!rec.aiResult,isOwn:true,audioUrl:rec.audioUrl,summary:rec.aiResult?.summary||[]});
     rec.reset(); setTitle("");
   };
   return <div style={{paddingTop:16}}>
@@ -184,7 +278,7 @@ function RecordScreen({onPublish}){
         <svg width="42" height="42" viewBox="0 0 42 42" fill="none"><rect x="14" y="6" width="14" height="22" rx="7" stroke={COLORS.textMuted} strokeWidth="2"/><path d="M7 21c0 7.73 6.27 14 14 14s14-6.27 14-14" stroke={COLORS.textMuted} strokeWidth="2" strokeLinecap="round"/><line x1="21" y1="35" x2="21" y2="41" stroke={COLORS.textMuted} strokeWidth="2" strokeLinecap="round"/></svg>
       </div>
       <div style={{fontSize:13,color:COLORS.textMuted,marginBottom:8}}>タップして録音開始</div>
-      {rec.errMsg&&<div style={{fontSize:12,color:COLORS.red,background:"#1A0808",borderRadius:10,padding:"10px 14px",marginBottom:12}}>{rec.errMsg}</div>}
+      {rec.errMsg&&<div style={{fontSize:12,color:COLORS.red,background:"#1A0808",borderRadius:10,padding:"10px 14px"}}>{rec.errMsg}</div>}
     </div>}
     {rec.state==="recording"&&<div style={{textAlign:"center"}}>
       <div onClick={rec.stop} style={{width:110,height:110,borderRadius:"50%",background:"#1A0808",border:`2px solid ${COLORS.red}`,margin:"0 auto 12px",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
@@ -203,15 +297,16 @@ function RecordScreen({onPublish}){
       <div style={{fontSize:14,color:COLORS.gold,marginBottom:6}}>AIが分析中...</div>
       <div style={{fontSize:12,color:COLORS.textMuted}}>文字起こし・要約・カテゴリを自動生成しています</div>
     </div>}
-    {rec.state==="done"&&rec.aiResult&&<div>
-      <div style={{background:COLORS.bgCard,borderRadius:16,padding:16,border:`0.5px solid ${COLORS.goldDim}`,marginBottom:14}}>
+    {rec.state==="done"&&<div>
+      {rec.audioUrl&&<AudioPlayer audioUrl={rec.audioUrl} title={title||rec.aiResult?.title||"録音した音声"}/>}
+      {rec.aiResult&&<div style={{background:COLORS.bgCard,borderRadius:16,padding:16,border:`0.5px solid ${COLORS.goldDim}`,marginBottom:14}}>
         <div style={{fontSize:10,color:COLORS.gold,marginBottom:10}}>AI分析完了</div>
         <input value={title||rec.aiResult.title} onChange={e=>setTitle(e.target.value)} style={{width:"100%",padding:"9px 12px",borderRadius:10,background:COLORS.bgDeep,border:`0.5px solid ${COLORS.border}`,color:COLORS.text,fontSize:13,outline:"none",marginBottom:12}}/>
         {rec.aiResult.summary.map((s,i)=><div key={i} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:6}}>
           <div style={{width:17,height:17,borderRadius:"50%",background:COLORS.navy,border:`0.5px solid ${COLORS.goldDim}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:9,color:COLORS.gold}}>{i+1}</div>
           <div style={{fontSize:12,color:COLORS.textMuted,lineHeight:1.5}}>{s}</div>
         </div>)}
-      </div>
+      </div>}
       <button onClick={handlePublish} style={{width:"100%",padding:"13px",borderRadius:14,background:COLORS.gold,border:"none",color:COLORS.bg,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8}}>投稿する</button>
       <button onClick={rec.reset} style={{width:"100%",padding:"10px",borderRadius:14,background:"none",border:`0.5px solid ${COLORS.border}`,color:COLORS.textMuted,fontSize:13,cursor:"pointer"}}>録音し直す</button>
     </div>}
@@ -235,8 +330,12 @@ export default function ORIOApp(){
   const [toast,setToast]=useState("");
 
   const showToast=msg=>{ setToast(msg); setTimeout(()=>setToast(""),3000); };
-  const handlePlay=ep=>{ if(playingEp?.id===ep.id)setIsPlaying(p=>!p); else{setPlayingEp(ep);setIsPlaying(true);} };
-  const handlePublish=ep=>{ setEpisodes(prev=>[ep,...prev]); setTab("home"); showToast("配信を投稿しました！"); };
+  const handlePlay=ep=>{
+    if(!ep.audioUrl){ showToast("この音声はサンプルです。自分で録音した音声は再生できます！"); return; }
+    if(playingEp?.id===ep.id)setIsPlaying(p=>!p);
+    else{ setPlayingEp(ep); setIsPlaying(true); }
+  };
+  const handlePublish=ep=>{ setEpisodes(prev=>[ep,...prev]); setTab("home"); showToast("配信を投稿しました！タップして音声を再生できます"); };
   const filtered=category==="すべて"?episodes:episodes.filter(e=>e.category===category);
 
   const navItems=[
@@ -251,7 +350,6 @@ export default function ORIOApp(){
     <style>{`
       @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
       @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-      @keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
       *{box-sizing:border-box}
       ::-webkit-scrollbar{width:3px}
       ::-webkit-scrollbar-thumb{background:${COLORS.navy};border-radius:2px}
@@ -293,7 +391,7 @@ export default function ORIOApp(){
         {tab==="record"&&<RecordScreen onPublish={handlePublish}/>}
         {tab==="revenue"&&<div style={{paddingTop:16}}>
           <div style={{fontSize:18,fontWeight:500,color:COLORS.text,marginBottom:16}}>収益ダッシュボード</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             {[{label:"今月の収益",val:"¥28,500",color:COLORS.gold},{label:"リスナー数",val:"1,080人",color:COLORS.text},{label:"投げ銭",val:"¥6,400",color:COLORS.text},{label:"還元率",val:"80%",color:COLORS.green},{label:"サブスク収入",val:"¥12,000",color:COLORS.text},{label:"自分の配信数",val:`${episodes.filter(e=>e.isOwn).length}本`,color:COLORS.gold}].map(m=><div key={m.label} style={{background:COLORS.bgCard,borderRadius:12,padding:12,border:`0.5px solid ${COLORS.border}`}}>
               <div style={{fontSize:10,color:COLORS.textMuted,marginBottom:4}}>{m.label}</div>
               <div style={{fontSize:17,fontWeight:500,color:m.color}}>{m.val}</div>
