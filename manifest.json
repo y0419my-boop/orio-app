@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#070D1A" />
+    <meta name="description" content="ORIO - あなたの本音を、耳へ届ける" />
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    <title>ORIO</title>
+    <style>
+      body { margin: 0; background: #070D1A; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
