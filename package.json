@@ -1,6 +1,21 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
-
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<React.StrictMode><App /></React.StrictMode>);
+{
+  "name": "orio-app",
+  "version": "0.1.0",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test"
+  },
+  "eslintConfig": {
+    "extends": ["react-app"]
+  },
+  "browserslist": {
+    "production": [">0.2%", "not dead", "not op_mini all"],
+    "development": ["last 1 chrome version", "last 1 firefox version", "last 1 safari version"]
+  }
+}
