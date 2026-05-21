@@ -15,8 +15,42 @@ const INIT_EPISODES = [
 ];
 
 const CATEGORIES = ["すべて","お金・投資","メンズ美容","キャリア"];
+const STORAGE_KEY = "orio_episodes";
+const TRANSCRIPT_KEY = "orio_transcript";
 
 function fmtSec(s){ return `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`; }
+
+function saveEpisodes(episodes){
+  try{
+    const toSave = episodes.map(ep=>({...ep, audioUrl:null}));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+  }catch(_){}
+}
+
+function loadEpisodes(){
+  try{
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if(saved){
+      const parsed = JSON.parse(saved);
+      const ownIds = new Set(parsed.filter(e=>e.isOwn).map(e=>e.id));
+      const merged = [...parsed.filter(e=>e.isOwn), ...INIT_EPISODES.filter(e=>!ownIds.has(e.id))];
+      return merged;
+    }
+  }catch(_){}
+  return INIT_EPISODES;
+}
+
+function saveTranscript(text){
+  try{ localStorage.setItem(TRANSCRIPT_KEY, text); }catch(_){}
+}
+
+function loadTranscript(){
+  try{ return localStorage.getItem(TRANSCRIPT_KEY)||""; }catch(_){ return ""; }
+}
+
+function clearTranscript(){
+  try{ localStorage.removeItem(TRANSCRIPT_KEY); }catch(_){}
+}
 
 function ORIOLogo({size=1}){
   const d=22*size;
@@ -65,7 +99,7 @@ async function generateAISummary(transcript){
 function useRecorder(){
   const [state,setState]=useState("idle");
   const [seconds,setSeconds]=useState(0);
-  const [transcript,setTranscript]=useState("");
+  const [transcript,setTranscript]=useState(loadTranscript);
   const [aiResult,setAiResult]=useState(null);
   const [errMsg,setErrMsg]=useState("");
   const [audioUrl,setAudioUrl]=useState(null);
@@ -73,9 +107,13 @@ function useRecorder(){
   const chunksRef=useRef([]);
   const timerRef=useRef(null);
   const recognRef=useRef(null);
+  const transcriptRef=useRef(transcript);
+
+  useEffect(()=>{ transcriptRef.current=transcript; },[transcript]);
 
   const start=useCallback(async()=>{
     setErrMsg(""); setTranscript(""); setAiResult(null); setAudioUrl(null);
+    clearTranscript();
     try{
       const stream=await navigator.mediaDevices.getUserMedia({audio:true});
       const mr=new MediaRecorder(stream);
@@ -90,13 +128,30 @@ function useRecorder(){
       mediaRef.current=mr;
       setState("recording"); setSeconds(0);
       timerRef.current=setInterval(()=>setSeconds(s=>s+1),1000);
+
       if("webkitSpeechRecognition"in window||"SpeechRecognition"in window){
         const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-        const r=new SR(); r.lang="ja-JP"; r.continuous=true; r.interimResults=true;
-        r.onresult=e=>{ let f=""; for(let i=0;i<e.results.length;i++)f+=e.results[i][0].transcript; setTranscript(f); };
-        r.start(); recognRef.current=r;
+        const r=new SR();
+        r.lang="ja-JP"; r.continuous=true; r.interimResults=true;
+        r.onresult=e=>{
+          let f="";
+          for(let i=0;i<e.results.length;i++)f+=e.results[i][0].transcript;
+          setTranscript(f);
+          saveTranscript(f);
+        };
+        r.onend=()=>{
+          // 録音中なら再起動して継続
+          if(mediaRef.current?.state==="recording"){
+            try{ r.start(); }catch(_){}
+          }
+        };
+        r.start();
+        recognRef.current=r;
       }
-    }catch(e){ setErrMsg("マイクへのアクセスが必要です。ブラウザの許可設定を確認してください。"); setState("error"); }
+    }catch(e){
+      setErrMsg("マイクへのアクセスが必要です。ブラウザの許可設定を確認してください。");
+      setState("error");
+    }
   },[]);
 
   const stop=useCallback(async()=>{
@@ -108,13 +163,15 @@ function useRecorder(){
     }
     setState("processing");
     await new Promise(r=>setTimeout(r,1000));
-    const t=transcript||"音声が録音されました。お金と投資についての配信です。";
+    const t=transcriptRef.current||"音声が録音されました。お金と投資についての配信です。";
     const result=await generateAISummary(t);
-    setAiResult(result); setState("done");
-  },[transcript]);
+    setAiResult(result);
+    setState("done");
+  },[]);
 
   const reset=useCallback(()=>{
     if(audioUrl)URL.revokeObjectURL(audioUrl);
+    clearTranscript();
     setState("idle"); setSeconds(0); setTranscript(""); setAiResult(null); setErrMsg(""); setAudioUrl(null);
   },[audioUrl]);
 
@@ -136,7 +193,11 @@ function AudioPlayer({audioUrl,title}){
     audio.addEventListener("timeupdate",onTime);
     audio.addEventListener("loadedmetadata",onMeta);
     audio.addEventListener("ended",onEnd);
-    return()=>{ audio.removeEventListener("timeupdate",onTime); audio.removeEventListener("loadedmetadata",onMeta); audio.removeEventListener("ended",onEnd); };
+    return()=>{
+      audio.removeEventListener("timeupdate",onTime);
+      audio.removeEventListener("loadedmetadata",onMeta);
+      audio.removeEventListener("ended",onEnd);
+    };
   },[audioUrl]);
 
   const toggle=()=>{
@@ -156,7 +217,7 @@ function AudioPlayer({audioUrl,title}){
 
   return <div style={{background:COLORS.bgDeep,borderRadius:12,padding:12,border:`0.5px solid ${COLORS.gold}`,marginBottom:12}}>
     <audio ref={audioRef} src={audioUrl} preload="metadata"/>
-    <div style={{fontSize:10,color:COLORS.gold,marginBottom:8}}>録音した音声を再生</div>
+    <div style={{fontSize:10,color:COLORS.gold,marginBottom:8}}>🎙 録音した音声を再生</div>
     <div style={{height:3,background:COLORS.border,borderRadius:2,marginBottom:10,cursor:"pointer",overflow:"hidden"}} onClick={seek}>
       <div style={{height:"100%",width:`${progress}%`,background:COLORS.gold,borderRadius:2,transition:"width .1s"}}/>
     </div>
@@ -178,7 +239,6 @@ function EpisodeCard({ep,onPlay,playing,onSelect}){
   return <div onClick={()=>onSelect(ep)} style={{background:COLORS.bgCard,borderRadius:14,padding:"12px 14px",marginBottom:10,border:`0.5px solid ${COLORS.border}`,cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.borderColor=COLORS.goldDim} onMouseLeave={e=>e.currentTarget.style.borderColor=COLORS.border}>
     {ep.hasAI&&<Badge color={COLORS.gold} bg={COLORS.bgDeep} border={COLORS.goldDim}>AI要約あり</Badge>}
     {ep.isOwn&&<Badge color={COLORS.green} bg={COLORS.bgDeep} border={COLORS.green}>自分の配信</Badge>}
-    {ep.audioUrl&&<Badge color={COLORS.gold} bg={COLORS.bgDeep} border={COLORS.goldDim}>再生可能</Badge>}
     <div style={{display:"flex",gap:10,margin:"8px 0"}}>
       <div style={{width:40,height:40,borderRadius:10,background:COLORS.navy,border:`0.5px solid ${COLORS.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><ORIOLogo size={0.85}/></div>
       <div style={{flex:1,minWidth:0}}>
@@ -193,10 +253,10 @@ function EpisodeCard({ep,onPlay,playing,onSelect}){
         <Badge>{ep.category}</Badge>
         <span style={{fontSize:11,color:COLORS.textDim}}>{ep.plays} 再生</span>
       </div>
-      <button onClick={e=>{e.stopPropagation();onPlay(ep);}} style={{width:32,height:32,borderRadius:"50%",background:ep.audioUrl?COLORS.gold:COLORS.navy,border:`0.5px solid ${ep.audioUrl?COLORS.gold:COLORS.border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <button onClick={e=>{e.stopPropagation();onPlay(ep);}} style={{width:32,height:32,borderRadius:"50%",background:COLORS.gold,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
         {playing
           ?<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="2" y="2" width="3" height="8" rx="1" fill={COLORS.bg}/><rect x="7" y="2" width="3" height="8" rx="1" fill={COLORS.bg}/></svg>
-          :<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 2l7 4-7 4V2z" fill={ep.audioUrl?COLORS.bg:COLORS.textDim}/></svg>}
+          :<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 2l7 4-7 4V2z" fill={COLORS.bg}/></svg>}
       </button>
     </div>
   </div>;
@@ -211,7 +271,6 @@ function AISummaryPanel({ep,onClose}){
       </div>
       <button onClick={onClose} style={{background:"none",border:"none",color:COLORS.textMuted,cursor:"pointer",fontSize:18}}>×</button>
     </div>
-    {ep.audioUrl&&<AudioPlayer audioUrl={ep.audioUrl} title={ep.title}/>}
     <div style={{borderTop:`0.5px solid ${COLORS.border}`,paddingTop:10}}>
       {ep.summary.map((s,i)=><div key={i} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:7}}>
         <div style={{width:18,height:18,borderRadius:"50%",background:COLORS.navy,border:`0.5px solid ${COLORS.goldDim}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:9,color:COLORS.gold,fontWeight:500}}>{i+1}</div>
@@ -223,36 +282,22 @@ function AISummaryPanel({ep,onClose}){
 }
 
 function PlayerBar({ep,playing,onToggle}){
-  const audioRef=useRef(null);
   const [prog,setProg]=useState(0);
-
   useEffect(()=>{
-    if(!ep?.audioUrl)return;
-    const audio=new Audio(ep.audioUrl);
-    audioRef.current=audio;
-    audio.addEventListener("timeupdate",()=>setProg(audio.currentTime/audio.duration*100||0));
-    audio.addEventListener("ended",()=>onToggle());
-    return()=>{ audio.pause(); audio.src=""; };
-  },[ep?.audioUrl]);
-
-  useEffect(()=>{
-    const audio=audioRef.current;
-    if(!audio)return;
-    if(playing)audio.play().catch(()=>{});
-    else audio.pause();
-  },[playing]);
-
+    if(!playing)return;
+    const id=setInterval(()=>setProg(p=>Math.min(p+0.25,100)),300);
+    return()=>clearInterval(id);
+  },[playing,ep]);
   if(!ep)return null;
-
   return <div style={{background:COLORS.bgDeep,borderTop:`0.5px solid ${COLORS.border}`,padding:"10px 16px 14px"}}>
     <div style={{height:2,background:COLORS.border,borderRadius:1,marginBottom:10,overflow:"hidden"}}>
-      <div style={{height:"100%",width:`${ep.audioUrl?prog:12}%`,background:COLORS.gold,borderRadius:1,transition:"width .3s linear"}}/>
+      <div style={{height:"100%",width:`${prog}%`,background:COLORS.gold,borderRadius:1,transition:"width .3s linear"}}/>
     </div>
     <div style={{display:"flex",alignItems:"center",gap:10}}>
       <div style={{width:36,height:36,borderRadius:10,background:COLORS.navy,border:`1.5px solid ${COLORS.gold}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><ORIOLogo size={0.8}/></div>
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontSize:12,fontWeight:500,color:COLORS.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ep.title}</div>
-        <div style={{fontSize:10,color:COLORS.textMuted}}>{ep.audioUrl?"音声あり · "+ep.creator:ep.creator}</div>
+        <div style={{fontSize:10,color:COLORS.textMuted}}>{ep.creator}</div>
       </div>
       <button onClick={onToggle} style={{width:36,height:36,borderRadius:"50%",background:COLORS.gold,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
         {playing
@@ -262,24 +307,47 @@ function PlayerBar({ep,playing,onToggle}){
     </div>
   </div>;
 }
+
 function RecordScreen({onPublish}){
   const rec=useRecorder();
   const [title,setTitle]=useState("");
+
   const handlePublish=()=>{
     const t=title.trim()||rec.aiResult?.title||"新しいエピソード";
-    onPublish({id:Date.now(),title:t,creator:"あなたの配信",category:rec.aiResult?.category||"お金・投資",duration:`${Math.floor(rec.seconds/60)||1}分`,plays:"0",hasAI:!!rec.aiResult,isOwn:true,audioUrl:rec.audioUrl,summary:rec.aiResult?.summary||[]});
-    rec.reset(); setTitle("");
+    onPublish({
+      id:Date.now(),
+      title:t,
+      creator:"あなたの配信",
+      category:rec.aiResult?.category||"お金・投資",
+      duration:`${Math.floor(rec.seconds/60)||1}分`,
+      plays:"0",
+      hasAI:!!rec.aiResult,
+      isOwn:true,
+      audioUrl:rec.audioUrl,
+      summary:rec.aiResult?.summary||[],
+      transcript:rec.transcript,
+    });
+    rec.reset();
+    setTitle("");
   };
+
   return <div style={{paddingTop:16}}>
     <div style={{fontSize:18,fontWeight:500,color:COLORS.text,marginBottom:4}}>配信する</div>
     <div style={{fontSize:12,color:COLORS.textMuted,marginBottom:24}}>あなたの本音を、耳へ届ける</div>
+
     {(rec.state==="idle"||rec.state==="error")&&<div style={{textAlign:"center"}}>
+      {rec.transcript&&<div style={{background:COLORS.bgCard,borderRadius:12,padding:12,textAlign:"left",border:`0.5px solid ${COLORS.goldDim}`,marginBottom:16}}>
+        <div style={{fontSize:10,color:COLORS.gold,marginBottom:6}}>前回の文字起こし（保存済み）</div>
+        <div style={{fontSize:12,color:COLORS.textMuted,lineHeight:1.6,maxHeight:80,overflow:"hidden"}}>{rec.transcript}</div>
+        <button onClick={()=>{clearTranscript();window.location.reload();}} style={{marginTop:8,fontSize:10,color:COLORS.red,background:"none",border:"none",cursor:"pointer",padding:0}}>クリアする</button>
+      </div>}
       <div onClick={rec.start} style={{width:110,height:110,borderRadius:"50%",background:COLORS.bgCard,border:`2px solid ${COLORS.border}`,margin:"0 auto 16px",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
         <svg width="42" height="42" viewBox="0 0 42 42" fill="none"><rect x="14" y="6" width="14" height="22" rx="7" stroke={COLORS.textMuted} strokeWidth="2"/><path d="M7 21c0 7.73 6.27 14 14 14s14-6.27 14-14" stroke={COLORS.textMuted} strokeWidth="2" strokeLinecap="round"/><line x1="21" y1="35" x2="21" y2="41" stroke={COLORS.textMuted} strokeWidth="2" strokeLinecap="round"/></svg>
       </div>
       <div style={{fontSize:13,color:COLORS.textMuted,marginBottom:8}}>タップして録音開始</div>
       {rec.errMsg&&<div style={{fontSize:12,color:COLORS.red,background:"#1A0808",borderRadius:10,padding:"10px 14px"}}>{rec.errMsg}</div>}
     </div>}
+
     {rec.state==="recording"&&<div style={{textAlign:"center"}}>
       <div onClick={rec.stop} style={{width:110,height:110,borderRadius:"50%",background:"#1A0808",border:`2px solid ${COLORS.red}`,margin:"0 auto 12px",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
         <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="6" y="6" width="16" height="16" rx="3" fill={COLORS.red}/></svg>
@@ -288,28 +356,36 @@ function RecordScreen({onPublish}){
       <div style={{fontSize:12,color:COLORS.red,marginBottom:16}}>録音中... タップで停止</div>
       <div style={{display:"flex",justifyContent:"center",marginBottom:16}}><Waveform active bars={16}/></div>
       {rec.transcript&&<div style={{background:COLORS.bgCard,borderRadius:12,padding:12,textAlign:"left",border:`0.5px solid ${COLORS.border}`}}>
-        <div style={{fontSize:10,color:COLORS.gold,marginBottom:6}}>リアルタイム文字起こし</div>
+        <div style={{fontSize:10,color:COLORS.gold,marginBottom:6}}>リアルタイム文字起こし（自動保存中）</div>
         <div style={{fontSize:12,color:COLORS.textMuted,lineHeight:1.6,maxHeight:80,overflow:"hidden"}}>{rec.transcript}</div>
       </div>}
     </div>}
+
     {rec.state==="processing"&&<div style={{textAlign:"center",paddingTop:20}}>
       <div style={{width:70,height:70,borderRadius:"50%",background:COLORS.bgCard,border:`2px solid ${COLORS.gold}`,margin:"0 auto 16px",display:"flex",alignItems:"center",justifyContent:"center"}}><ORIOLogo size={1.3}/></div>
       <div style={{fontSize:14,color:COLORS.gold,marginBottom:6}}>AIが分析中...</div>
       <div style={{fontSize:12,color:COLORS.textMuted}}>文字起こし・要約・カテゴリを自動生成しています</div>
     </div>}
+
     {rec.state==="done"&&<div>
       {rec.audioUrl&&<AudioPlayer audioUrl={rec.audioUrl} title={title||rec.aiResult?.title||"録音した音声"}/>}
       {rec.aiResult&&<div style={{background:COLORS.bgCard,borderRadius:16,padding:16,border:`0.5px solid ${COLORS.goldDim}`,marginBottom:14}}>
-        <div style={{fontSize:10,color:COLORS.gold,marginBottom:10}}>AI分析完了</div>
+        <div style={{fontSize:10,color:COLORS.gold,marginBottom:10}}>AI分析完了 ✦</div>
+        <div style={{fontSize:11,color:COLORS.textMuted,marginBottom:4}}>タイトル（編集できます）</div>
         <input value={title||rec.aiResult.title} onChange={e=>setTitle(e.target.value)} style={{width:"100%",padding:"9px 12px",borderRadius:10,background:COLORS.bgDeep,border:`0.5px solid ${COLORS.border}`,color:COLORS.text,fontSize:13,outline:"none",marginBottom:12}}/>
         {rec.aiResult.summary.map((s,i)=><div key={i} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:6}}>
           <div style={{width:17,height:17,borderRadius:"50%",background:COLORS.navy,border:`0.5px solid ${COLORS.goldDim}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:9,color:COLORS.gold}}>{i+1}</div>
           <div style={{fontSize:12,color:COLORS.textMuted,lineHeight:1.5}}>{s}</div>
         </div>)}
+        {rec.transcript&&<div style={{marginTop:10,paddingTop:10,borderTop:`0.5px solid ${COLORS.border}`}}>
+          <div style={{fontSize:10,color:COLORS.textMuted,marginBottom:4}}>文字起こし全文（保存済み）</div>
+          <div style={{fontSize:11,color:COLORS.textDim,lineHeight:1.6,maxHeight:60,overflow:"hidden"}}>{rec.transcript}</div>
+        </div>}
       </div>}
       <button onClick={handlePublish} style={{width:"100%",padding:"13px",borderRadius:14,background:COLORS.gold,border:"none",color:COLORS.bg,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8}}>投稿する</button>
       <button onClick={rec.reset} style={{width:"100%",padding:"10px",borderRadius:14,background:"none",border:`0.5px solid ${COLORS.border}`,color:COLORS.textMuted,fontSize:13,cursor:"pointer"}}>録音し直す</button>
     </div>}
+
     {rec.state==="idle"&&<div style={{background:COLORS.bgCard,borderRadius:14,padding:14,border:`0.5px solid ${COLORS.border}`,marginTop:20}}>
       <div style={{fontSize:11,color:COLORS.textMuted,marginBottom:8}}>投稿後に自動で実行されます</div>
       {["AI文字起こし・要約を自動生成","Spotify・Apple Podcastに同時配信","タグ・カテゴリを自動付与"].map((f,i)=><div key={i} style={{display:"flex",gap:8,alignItems:"center",marginBottom:6}}>
@@ -319,23 +395,32 @@ function RecordScreen({onPublish}){
     </div>}
   </div>;
 }
-
 export default function ORIOApp(){
   const [tab,setTab]=useState("home");
   const [category,setCategory]=useState("すべて");
-  const [episodes,setEpisodes]=useState(INIT_EPISODES);
+  const [episodes,setEpisodes]=useState(loadEpisodes);
   const [playingEp,setPlayingEp]=useState(null);
   const [isPlaying,setIsPlaying]=useState(false);
   const [selectedEp,setSelectedEp]=useState(null);
   const [toast,setToast]=useState("");
 
-  const showToast=msg=>{ setToast(msg); setTimeout(()=>setToast(""),3000); };
+  useEffect(()=>{ saveEpisodes(episodes); },[episodes]);
+
+  const showToast=msg=>{ setToast(msg); setTimeout(()=>setToast(""),3500); };
   const handlePlay=ep=>{
-    if(!ep.audioUrl){ showToast("この音声はサンプルです。自分で録音した音声は再生できます！"); return; }
+    if(!ep.audioUrl){ showToast("サンプル音声は再生できません。自分で録音した音声は再生できます！"); return; }
     if(playingEp?.id===ep.id)setIsPlaying(p=>!p);
     else{ setPlayingEp(ep); setIsPlaying(true); }
   };
-  const handlePublish=ep=>{ setEpisodes(prev=>[ep,...prev]); setTab("home"); showToast("配信を投稿しました！タップして音声を再生できます"); };
+  const handlePublish=ep=>{
+    setEpisodes(prev=>{
+      const next=[ep,...prev];
+      saveEpisodes(next);
+      return next;
+    });
+    setTab("home");
+    showToast("配信を投稿しました！エピソードが保存されました✅");
+  };
   const filtered=category==="すべて"?episodes:episodes.filter(e=>e.category===category);
 
   const navItems=[
@@ -355,12 +440,15 @@ export default function ORIOApp(){
       ::-webkit-scrollbar-thumb{background:${COLORS.navy};border-radius:2px}
       input::placeholder{color:${COLORS.textDim}}
     `}</style>
-    {toast&&<div style={{position:"fixed",top:20,left:"50%",transform:"translateX(-50%)",background:COLORS.gold,color:COLORS.bg,padding:"10px 20px",borderRadius:99,fontSize:13,fontWeight:500,zIndex:999}}>{toast}</div>}
+
+    {toast&&<div style={{position:"fixed",top:20,left:"50%",transform:"translateX(-50%)",background:COLORS.gold,color:COLORS.bg,padding:"10px 20px",borderRadius:99,fontSize:13,fontWeight:500,zIndex:999,whiteSpace:"nowrap"}}>{toast}</div>}
+
     <div style={{width:"100%",maxWidth:390,background:COLORS.bgDeep,borderRadius:40,overflow:"hidden",border:`1.5px solid ${COLORS.border}`,display:"flex",flexDirection:"column",minHeight:720}}>
       <div style={{background:COLORS.bgDeep,padding:"12px 24px 6px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <span style={{fontSize:13,fontWeight:600,color:COLORS.text}}>9:41</span>
         <div style={{display:"flex",gap:3,alignItems:"flex-end"}}>{[5,8,11].map((h,i)=><div key={i} style={{width:3,height:h,background:COLORS.gold,borderRadius:1}}/>)}</div>
       </div>
+
       <div style={{flex:1,overflowY:"auto",padding:"0 16px"}}>
         {tab==="home"&&<div style={{animation:"fadeIn .25s ease"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 0 10px"}}>
@@ -377,6 +465,7 @@ export default function ORIOApp(){
           {selectedEp?.hasAI&&<AISummaryPanel ep={selectedEp} onClose={()=>setSelectedEp(null)}/>}
           {filtered.map(ep=><EpisodeCard key={ep.id} ep={ep} onPlay={handlePlay} playing={playingEp?.id===ep.id&&isPlaying} onSelect={e=>setSelectedEp(e.hasAI?e:null)}/>)}
         </div>}
+
         {tab==="search"&&<div style={{paddingTop:16}}>
           <div style={{fontSize:18,fontWeight:500,color:COLORS.text,marginBottom:14}}>探す</div>
           <input placeholder="タイトル・クリエイターで検索..." style={{width:"100%",padding:"10px 14px",borderRadius:12,background:COLORS.bgCard,border:`0.5px solid ${COLORS.border}`,color:COLORS.text,fontSize:13,outline:"none",marginBottom:18}}/>
@@ -388,16 +477,26 @@ export default function ORIOApp(){
             </div>)}
           </div>
         </div>}
+
         {tab==="record"&&<RecordScreen onPublish={handlePublish}/>}
+
         {tab==="revenue"&&<div style={{paddingTop:16}}>
           <div style={{fontSize:18,fontWeight:500,color:COLORS.text,marginBottom:16}}>収益ダッシュボード</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
             {[{label:"今月の収益",val:"¥28,500",color:COLORS.gold},{label:"リスナー数",val:"1,080人",color:COLORS.text},{label:"投げ銭",val:"¥6,400",color:COLORS.text},{label:"還元率",val:"80%",color:COLORS.green},{label:"サブスク収入",val:"¥12,000",color:COLORS.text},{label:"自分の配信数",val:`${episodes.filter(e=>e.isOwn).length}本`,color:COLORS.gold}].map(m=><div key={m.label} style={{background:COLORS.bgCard,borderRadius:12,padding:12,border:`0.5px solid ${COLORS.border}`}}>
               <div style={{fontSize:10,color:COLORS.textMuted,marginBottom:4}}>{m.label}</div>
               <div style={{fontSize:17,fontWeight:500,color:m.color}}>{m.val}</div>
             </div>)}
           </div>
+          <div style={{background:COLORS.bgCard,borderRadius:14,padding:14,border:`0.5px solid ${COLORS.border}`}}>
+            <div style={{fontSize:11,color:COLORS.textMuted,marginBottom:8}}>同時配信状況</div>
+            {["ORIO","Spotify","Apple Podcast"].map(p=><div key={p} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
+              <span style={{fontSize:12,color:COLORS.text}}>{p}</span>
+              <Badge color={COLORS.green} bg={COLORS.bgDeep} border={COLORS.green}>同期済み</Badge>
+            </div>)}
+          </div>
         </div>}
+
         {tab==="profile"&&<div style={{paddingTop:16}}>
           <div style={{textAlign:"center",marginBottom:20}}>
             <div style={{width:64,height:64,borderRadius:"50%",background:COLORS.navy,border:`2px solid ${COLORS.gold}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,fontWeight:500,color:COLORS.gold,margin:"0 auto 10px"}}>YT</div>
@@ -414,10 +513,15 @@ export default function ORIOApp(){
             <span style={{fontSize:13,color:COLORS.text}}>{item}</span>
             <span style={{marginLeft:"auto",color:COLORS.textDim,fontSize:16}}>›</span>
           </div>)}
+          <button onClick={()=>{localStorage.clear();window.location.reload();}} style={{width:"100%",padding:"10px",borderRadius:12,background:"none",border:`0.5px solid ${COLORS.red}`,color:COLORS.red,fontSize:12,cursor:"pointer",marginTop:8}}>
+            データをリセット
+          </button>
         </div>}
         <div style={{height:16}}/>
       </div>
+
       <PlayerBar ep={playingEp} playing={isPlaying} onToggle={()=>setIsPlaying(p=>!p)}/>
+
       <div style={{background:COLORS.bgDeep,borderTop:`0.5px solid ${COLORS.border}`,padding:"10px 0 18px",display:"flex",justifyContent:"space-around"}}>
         {navItems.map(n=><button key={n.id} onClick={()=>setTab(n.id)} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"none",border:"none",cursor:"pointer",padding:"0 8px",color:tab===n.id?COLORS.gold:COLORS.textDim}}>
           {n.icon}
